@@ -67,6 +67,9 @@ app.use('/proxy', (req, res, next) => {
     const dynamicProxy = createProxyMiddleware({
         target: sanitizedUrl,
         changeOrigin: true,
+        pathRewrite: {
+            '^/proxy': '',
+        },
         followRedirects: true,
         timeout: 10000,
         proxyTimeout: 10000,
