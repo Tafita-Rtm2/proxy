@@ -3,32 +3,18 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import cors from 'cors';
 import helmet from 'helmet';
 import Utilities from './utilities.js';
-import DDoSProtection from './ddos-protection.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const ddosProtection = new DDoSProtection();
 
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-const generalLimiter = DDoSProtection.createRateLimiter(60000, 100);
-app.use(generalLimiter);
-
+// Middleware to generate a request ID
 app.use((req, res, next) => {
-    const clientIP = Utilities.getClientIP(req);
     req.requestId = Utilities.generateRequestId();
-
-    if (ddosProtection.isIPBlocked(clientIP)) {
-        return res.status(429).json({ error: 'IP temporarily blocked due to excessive requests' });
-    }
-
-    if (!ddosProtection.monitorRequest(clientIP)) {
-        return res.status(429).json({ error: 'Request rate limit exceeded' });
-    }
-
     next();
 });
 
@@ -70,7 +56,7 @@ app.use('/proxy', (req, res, next) => {
         pathRewrite: {
             '^/proxy': '',
         },
-        followRedirects: true,
+        followRedirects: false, // Let client handle redirects
         timeout: 10000,
         proxyTimeout: 10000,
         secure: true,
@@ -86,6 +72,20 @@ app.use('/proxy', (req, res, next) => {
             proxyReq.removeHeader('x-forwarded-proto');
             proxyReq.removeHeader('x-forwarded-host');
         },
+        onProxyRes: (proxyRes, req, res) => {
+            // Rewrite the Location header for redirects to keep the user within the proxy
+            if (proxyRes.headers['location']) {
+                try {
+                    const targetUrl = new URL(proxyRes.headers['location'], sanitizedUrl);
+                    const proxyHost = req.get('host');
+                    const proxyProtocol = req.protocol;
+                    // Important: hpm modifies the original response, so we need to set headers on `res`
+                    res.setHeader('location', `${proxyProtocol}://${proxyHost}/proxy?url=${encodeURIComponent(targetUrl.href)}`);
+                } catch (error) {
+                    // Ignore invalid location headers
+                }
+            }
+        },
         onError: (err, req, res) => {
             res.status(500).json({ error: 'Proxy error occurred', details: err.message });
         }
@@ -94,24 +94,15 @@ app.use('/proxy', (req, res, next) => {
     dynamicProxy(req, res, next);
 });
 
-app.get('/stats/:ip?', (req, res) => {
-    const ip = req.params.ip || Utilities.getClientIP(req);
-    const stats = ddosProtection.getIPStats(ip);
-    res.json(stats);
-});
-
 app.get('/health', async (req, res) => {
     const health = {
         status: 'OK',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        memory: process.memoryUsage(),
-        blockedIPs: Array.from(ddosProtection.blockedIPs).length
+        memory: process.memoryUsage()
     };
     res.json(health);
 });
-
-setInterval(() => ddosProtection.cleanupOldRequests(), 3600000);
 
 app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Internal server error', requestId: req.requestId });
