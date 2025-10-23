@@ -2,6 +2,7 @@ import express from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import cors from 'cors';
 import helmet from 'helmet';
+import zlib from 'zlib';
 import Utilities from './utilities.js';
 
 const app = express();
@@ -49,42 +50,102 @@ app.use('/proxy', (req, res, next) => {
     }
 
     const sanitizedUrl = Utilities.sanitizeInput(targetUrl);
+    const targetOrigin = new URL(sanitizedUrl).origin;
 
     const dynamicProxy = createProxyMiddleware({
         target: sanitizedUrl,
         changeOrigin: true,
-        pathRewrite: {
-            '^/proxy': '',
+        selfHandleResponse: true, // This is key to rewriting content
+        cookieDomainRewrite: "", // Rewrite cookie domains to the proxy's domain
+        cookiePathRewrite: { // Rewrite cookie paths to be generic
+            "*": "/"
         },
-        followRedirects: false, // Let client handle redirects
-        timeout: 10000,
-        proxyTimeout: 10000,
-        secure: true,
-        ssl: {
-            rejectUnauthorized: false
-        },
+        timeout: 30000,
+        proxyTimeout: 30000,
+        
         onProxyReq: (proxyReq, req, res) => {
-            // Set a common user agent to avoid fingerprinting
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
-
-            // Remove headers that could reveal the proxy's nature or the user's original IP
             proxyReq.removeHeader('x-forwarded-for');
             proxyReq.removeHeader('x-forwarded-proto');
             proxyReq.removeHeader('x-forwarded-host');
         },
+
         onProxyRes: (proxyRes, req, res) => {
-            // Rewrite the Location header for redirects to keep the user within the proxy
-            if (proxyRes.headers['location']) {
-                try {
-                    const targetUrl = new URL(proxyRes.headers['location'], sanitizedUrl);
-                    const proxyHost = req.get('host');
-                    const proxyProtocol = req.protocol;
-                    // Important: hpm modifies the original response, so we need to set headers on `res`
-                    res.setHeader('location', `${proxyProtocol}://${proxyHost}/proxy?url=${encodeURIComponent(targetUrl.href)}`);
-                } catch (error) {
-                    // Ignore invalid location headers
-                }
+            // Handle cookies to make them work better over the proxy
+            if (proxyRes.headers['set-cookie']) {
+                const cookies = proxyRes.headers['set-cookie'].map(cookie => {
+                    return cookie.replace(/; secure/ig, ''); // Allow secure cookies even if proxy is not https
+                });
+                proxyRes.headers['set-cookie'] = cookies;
             }
+
+            const proxyHost = req.get('host');
+            const proxyProtocol = req.protocol;
+
+            const proxifyUrl = (originalUrl) => {
+                try {
+                    const absoluteUrl = new URL(originalUrl, targetOrigin).href;
+                    return `${proxyProtocol}://${proxyHost}/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+                } catch (e) {
+                    return originalUrl;
+                }
+            };
+
+            // Handle redirects
+            if (proxyRes.headers['location']) {
+                res.setHeader('location', proxifyUrl(proxyRes.headers['location']));
+                res.writeHead(proxyRes.statusCode);
+                res.end();
+                return;
+            }
+
+            // Don't rewrite non-text content (images, etc.)
+            const contentType = proxyRes.headers['content-type'] || '';
+            if (!/^(text\/html|text\/css|application\/javascript|application\/json)/.test(contentType)) {
+                proxyRes.pipe(res);
+                return;
+            }
+
+            const chunks = [];
+            proxyRes.on('data', chunk => chunks.push(chunk));
+            proxyRes.on('end', () => {
+                const buffer = Buffer.concat(chunks);
+                const contentEncoding = proxyRes.headers['content-encoding'];
+                let body;
+
+                try {
+                    if (contentEncoding === 'gzip') {
+                        body = zlib.gunzipSync(buffer).toString();
+                    } else if (contentEncoding === 'deflate') {
+                        body = zlib.inflateSync(buffer).toString();
+                    } else {
+                        body = buffer.toString();
+                    }
+                } catch (e) {
+                    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+                    res.end(buffer);
+                    return;
+                }
+
+                // Rewrite URLs in the body
+                const rewrittenBody = body
+                    .replace(/(href|src|action|poster|data-src)=["'](\/[^/][^"']*)["']/g, (match, attr, url) => `${attr}="${proxifyUrl(url)}"`)
+                    .replace(/(href|src|action)=["'](\/\/[^"']+)["']/g, (match, attr, url) => `${attr}="${proxifyUrl(`https:${url}`)}"`)
+                    .replace(/url\(\s*['"]?(\/.*?)['"]?\s*\)/g, (match, url) => `url(${proxifyUrl(url)})`)
+                    .replace(new RegExp(targetOrigin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), `${proxyProtocol}://${proxyHost}/proxy?url=${encodeURIComponent(targetOrigin)}`);
+
+                delete proxyRes.headers['content-length'];
+                delete proxyRes.headers['content-encoding'];
+                res.writeHead(proxyRes.statusCode, proxyRes.headers);
+
+                if (contentEncoding === 'gzip') {
+                    res.end(zlib.gzipSync(rewrittenBody));
+                } else if (contentEncoding === 'deflate') {
+                    res.end(zlib.deflateSync(rewrittenBody));
+                } else {
+                    res.end(rewrittenBody);
+                }
+            });
         },
         onError: (err, req, res) => {
             res.status(500).json({ error: 'Proxy error occurred', details: err.message });
