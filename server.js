@@ -75,8 +75,13 @@ app.use('/proxy', (req, res, next) => {
             rejectUnauthorized: false
         },
         onProxyReq: (proxyReq, req, res) => {
-            proxyReq.setHeader('X-Request-ID', req.requestId);
-            proxyReq.setHeader('X-Forwarded-For', Utilities.getClientIP(req));
+            // Set a common user agent to avoid fingerprinting
+            proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
+
+            // Remove headers that could reveal the proxy's nature or the user's original IP
+            proxyReq.removeHeader('x-forwarded-for');
+            proxyReq.removeHeader('x-forwarded-proto');
+            proxyReq.removeHeader('x-forwarded-host');
         },
         onError: (err, req, res) => {
             res.status(500).json({ error: 'Proxy error occurred', details: err.message });
