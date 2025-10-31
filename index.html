@@ -37,9 +37,19 @@
             color: white;
             border-radius: 5px;
             cursor: pointer;
+            transition: background-color 0.3s;
         }
         button:hover {
             background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #status-message {
+            margin-top: 15px;
+            color: #555;
+            min-height: 20px;
         }
     </style>
 </head>
@@ -53,17 +63,35 @@
             <br>
             <input type="text" id="url" placeholder="Entrez l'URL du site à visiter" required>
             <br>
-            <button type="submit">Naviguer</button>
+            <button type="submit" id="submit-btn">Naviguer</button>
         </form>
+        <div id="status-message"></div>
     </div>
     <script>
         document.getElementById('proxy-form').addEventListener('submit', function(event) {
             event.preventDefault();
-            const country = document.getElementById('country').value;
-            const url = document.getElementById('url').value;
-            if (url) {
-                window.location.href = `/proxy?url=${encodeURIComponent(url)}&country=${country}`;
+
+            const submitBtn = document.getElementById('submit-btn');
+            const statusMessage = document.getElementById('status-message');
+            const urlInput = document.getElementById('url');
+            const countrySelect = document.getElementById('country');
+            const url = urlInput.value;
+            const country = countrySelect.value;
+
+            if (!url) {
+                statusMessage.textContent = 'Veuillez entrer une URL.';
+                return;
             }
+
+            // Fournir un retour visuel à l'utilisateur
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Navigation en cours...';
+            urlInput.disabled = true;
+            countrySelect.disabled = true;
+            statusMessage.textContent = 'Veuillez patienter, la recherche d\'un proxy disponible peut prendre jusqu\'à une minute...';
+
+            // Procéder à la navigation
+            window.location.href = `/proxy?url=${encodeURIComponent(url)}&country=${country}`;
         });
     </script>
 </body>
