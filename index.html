@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proxy de Navigation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f0f2f5;
+        }
+        .container {
+            text-align: center;
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        select, input[type="text"] {
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            width: 300px;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            background-color: #007bff;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Choisissez votre destination</h1>
+        <form id="proxy-form">
+            <select id="country">
+                <option value="france">France</option>
+            </select>
+            <br>
+            <input type="text" id="url" placeholder="Entrez l'URL du site à visiter" required>
+            <br>
+            <button type="submit">Naviguer</button>
+        </form>
+    </div>
+    <script>
+        document.getElementById('proxy-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const country = document.getElementById('country').value;
+            const url = document.getElementById('url').value;
+            if (url) {
+                window.location.href = `/proxy?url=${encodeURIComponent(url)}&country=${country}`;
+            }
+        });
+    </script>
+</body>
+</html>
