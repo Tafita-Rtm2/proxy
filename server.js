@@ -11,6 +11,17 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Liste d'adresses IP françaises pour une meilleure simulation
+const frenchIPs = [
+    '81.64.0.1',      // Orange S.A.
+    '90.1.0.1',       // Free SAS
+    '176.130.0.1',    // SFR
+    '194.158.96.1',   // Bouygues Telecom
+    '212.227.38.100', // OVH
+    '5.135.159.239',  // Scaleway/Online S.A.S.
+    '37.187.127.133'  // OVH
+];
+
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -43,12 +54,19 @@ app.use('/proxy', (req, res, next) => {
         onProxyReq: (proxyReq, req, res) => {
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
             proxyReq.setHeader('Accept-Encoding', 'identity');
+
+            // Supprimer les en-têtes qui pourraient révéler l'identité du client ou l'utilisation d'un proxy
             proxyReq.removeHeader('x-forwarded-for');
-            proxyReq.removeHeader('x-forwarded-proto');
             proxyReq.removeHeader('x-forwarded-host');
+            proxyReq.removeHeader('x-forwarded-proto');
+            proxyReq.removeHeader('x-real-ip');
+            proxyReq.removeHeader('via');
+            proxyReq.removeHeader('forwarded');
+            proxyReq.removeHeader('from');
 
             if (country === 'france') {
-                proxyReq.setHeader('X-Forwarded-For', '195.154.29.111'); // IP française
+                const randomFrenchIP = frenchIPs[Math.floor(Math.random() * frenchIPs.length)];
+                proxyReq.setHeader('X-Forwarded-For', randomFrenchIP);
             }
         },
 
