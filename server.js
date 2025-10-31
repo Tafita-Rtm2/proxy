@@ -3,7 +3,11 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import cors from 'cors';
 import helmet from 'helmet';
 import Utilities from './utilities.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -13,18 +17,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.get('/', (req, res) => {
-    const targetUrl = req.query.url || req.body.url;
-    if (!targetUrl) return res.status(400).json({ error: 'Target URL is required' });
-    if (!Utilities.validateUrl(targetUrl)) return res.status(400).json({ error: 'Invalid URL format' });
-    const sanitizedUrl = Utilities.sanitizeInput(targetUrl);
-    res.json({ 
-        proxyUrl: `${req.protocol}://${req.get('host')}/proxy?url=${encodeURIComponent(sanitizedUrl)}`,
-        originalUrl: sanitizedUrl,
-    });
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.use('/proxy', (req, res, next) => {
     const targetUrl = req.query.url;
+    const country = req.query.country;
+
     if (!targetUrl) return res.status(400).json({ error: 'Target URL is required' });
     if (!Utilities.validateUrl(targetUrl)) return res.status(400).json({ error: 'Invalid URL format' });
 
@@ -39,14 +38,18 @@ app.use('/proxy', (req, res, next) => {
         cookiePathRewrite: { "*": "/" },
         timeout: 30000,
         proxyTimeout: 30000,
+        pathRewrite: { '^/proxy': '' },
 
         onProxyReq: (proxyReq, req, res) => {
             proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36');
-            // Request uncompressed content from the target server
             proxyReq.setHeader('Accept-Encoding', 'identity');
             proxyReq.removeHeader('x-forwarded-for');
             proxyReq.removeHeader('x-forwarded-proto');
             proxyReq.removeHeader('x-forwarded-host');
+
+            if (country === 'france') {
+                proxyReq.setHeader('X-Forwarded-For', '195.154.29.111'); // IP française
+            }
         },
 
         onProxyRes: (proxyRes, req, res) => {
@@ -56,7 +59,11 @@ app.use('/proxy', (req, res, next) => {
             const proxifyUrl = (originalUrl) => {
                 try {
                     const absoluteUrl = new URL(originalUrl, targetOrigin).href;
-                    return `${proxyProtocol}://${proxyHost}/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+                    let proxyUrl = `${proxyProtocol}://${proxyHost}/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+                    if (country) {
+                        proxyUrl += `&country=${country}`;
+                    }
+                    return proxyUrl;
                 } catch (e) { return originalUrl; }
             };
 
